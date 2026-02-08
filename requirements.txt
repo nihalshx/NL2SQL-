@@ -1,1 +1,14 @@
+# ─────────────────────────────────────────────
+# Core (required)
+# ─────────────────────────────────────────────
 flask==3.0.0
+
+# ─────────────────────────────────────────────
+# Transformer Engine (optional — for model training & inference)
+# Install with:  pip install -r requirements.txt
+# ─────────────────────────────────────────────
+torch>=2.0.0
+transformers>=4.35.0
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+accelerate>=0.25.0
