@@ -2,11 +2,20 @@
 NL2SQL - Natural Language to SQL Query Generator
 Flask-based web application that converts natural language questions
 into syntactically correct SQL queries.
+
+Supports two engines:
+  • Rule-based   – Fast, zero-dependency pattern matching
+  • Transformer  – T5/BART deep learning model (requires PyTorch)
 """
 
 from flask import Flask, render_template, request, jsonify
 import re
+import os
 import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -367,23 +376,74 @@ class NL2SQLEngine:
         }
 
 
-# Initialize engine
-engine = NL2SQLEngine()
+# Initialize engines
+rule_engine = NL2SQLEngine()
+transformer_engine = None
+
+# Try to load transformer engine
+MODEL_PATH = os.environ.get("NL2SQL_MODEL_PATH", "checkpoints/best_model")
+TRANSFORMER_AVAILABLE = False
+
+try:
+    if os.path.exists(MODEL_PATH):
+        from model.transformer_engine import TransformerNL2SQLEngine
+        transformer_engine = TransformerNL2SQLEngine(MODEL_PATH)
+        TRANSFORMER_AVAILABLE = True
+        logger.info(f"Transformer engine loaded from: {MODEL_PATH}")
+    else:
+        logger.info(f"No model found at {MODEL_PATH}. Using rule-based engine only.")
+except ImportError:
+    logger.info("PyTorch/Transformers not installed. Transformer engine unavailable.")
+except Exception as e:
+    logger.warning(f"Failed to load Transformer engine: {e}")
+
 
 # ─────────────────────────────────────────────
 # Routes
 # ─────────────────────────────────────────────
 @app.route('/')
 def index():
-    return render_template('index.html', schemas=SAMPLE_SCHEMAS)
+    return render_template(
+        'index.html',
+        schemas=SAMPLE_SCHEMAS,
+        transformer_available=TRANSFORMER_AVAILABLE,
+    )
 
 
 @app.route('/generate', methods=['POST'])
 def generate():
     data = request.get_json()
     question = data.get('question', '')
-    result = engine.generate_sql(question)
+    engine_type = data.get('engine', 'rule')  # 'rule' or 'transformer'
+    table_hint = data.get('table', None)
+
+    if engine_type == 'transformer' and TRANSFORMER_AVAILABLE and transformer_engine:
+        # Detect schema for context
+        schema = rule_engine.detect_table(question)
+        if table_hint and table_hint in SAMPLE_SCHEMAS:
+            schema = SAMPLE_SCHEMAS[table_hint]
+
+        result = transformer_engine.generate_sql(
+            question=question,
+            table_name=schema["table"],
+            columns=schema["columns"],
+        )
+        result["engine"] = "transformer"
+    else:
+        result = rule_engine.generate_sql(question)
+        result["engine"] = "rule"
+
     return jsonify(result)
+
+
+@app.route('/status')
+def status():
+    """Return engine status information."""
+    return jsonify({
+        "rule_engine": True,
+        "transformer_engine": TRANSFORMER_AVAILABLE,
+        "model_path": MODEL_PATH if TRANSFORMER_AVAILABLE else None,
+    })
 
 
 @app.route('/examples')
